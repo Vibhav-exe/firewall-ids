@@ -23,20 +23,24 @@ from core.inference import predict
 from monitor.alert_logger import log_alert
 
 
-INTERFACE = "wlan0"       # Change to your interface name
-THRESHOLD = 0.95         # ML confidence threshold to block
+INTERFACE = "wlan0"
+THRESHOLD = 0.95
 
 
 def process_packet(ip, timestamp):
     try:
-        features = extract_features(ip)
-        score = predict(features)
-
         src_ip = pcap.ntoa(ip.src) if isinstance(ip.src, int) else \
                  ".".join(str(b) for b in ip.src)
 
         dst_ip = ".".join(str(b) for b in ip.dst) \
                  if hasattr(ip.dst, '__iter__') else str(ip.dst)
+
+        # ✅ Whitelist check BEFORE ML inference
+        if src_ip in WHITELIST or dst_ip in WHITELIST:
+            return
+
+        features = extract_features(ip)
+        score = predict(features)
 
         proto = {6: "TCP", 17: "UDP", 1: "ICMP"}.get(ip.p, str(ip.p))
 
@@ -50,21 +54,22 @@ def process_packet(ip, timestamp):
                   f"[OK]    {src_ip} → {dst_ip} | {proto} | len={ip.len}")
 
     except Exception as e:
-        pass   # Skip malformed packets silently
+        pass
 
 
 def start_capture():
     pc = pcap.pcap(
         name=INTERFACE,
-        promisc=True,          # Capture all packets, not just destined for this host
-        immediate=True,        # No buffering delay
-        timeout_ms=50          # Low timeout keeps loop responsive
+        promisc=True,
+        immediate=True,
+        timeout_ms=50
     )
-    pc.setfilter("ip")         # BPF filter — drops non-IP at kernel level
+    pc.setfilter("ip")
 
     print(f"[*] Starting capture on interface: {INTERFACE}")
     print(f"[*] Platform: {sys.platform}")
     print(f"[*] Block threshold: {THRESHOLD}")
+    print(f"[*] Whitelisted IPs: {WHITELIST}")
     print("-" * 50)
 
     try:
@@ -75,7 +80,7 @@ def start_capture():
                     continue
                 process_packet(eth.data, timestamp)
             except dpkt.dpkt.NeedData:
-                pass    # Incomplete packet, skip
+                pass
             except Exception:
                 pass
 
