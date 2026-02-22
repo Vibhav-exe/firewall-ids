@@ -6,7 +6,7 @@ from datetime import datetime
 
 
 WHITELIST = {
-    "192.168.29.171",   # Pi's own IP
+    #"192.168.29.171",   # Pi's own IP
     "192.168.29.54",    # Your Windows machine
     "192.168.29.1",     # Router
 }
