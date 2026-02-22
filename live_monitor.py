@@ -4,6 +4,14 @@ import dpkt
 import numpy as np
 from datetime import datetime
 
+
+WHITELIST = {
+    "192.168.29.171",   # Pi's own IP
+    "192.168.29.54",    # Your Windows machine
+    "192.168.29.1",     # Router
+}
+
+
 # Platform guard — these only exist on Linux/Pi
 if sys.platform == "linux":
     from core.rule_engine import block_ip
