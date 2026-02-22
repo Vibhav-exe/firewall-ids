@@ -16,7 +16,7 @@ from monitor.alert_logger import log_alert
 
 
 INTERFACE = "wlan0"       # Change to your interface name
-THRESHOLD = 0.75         # ML confidence threshold to block
+THRESHOLD = 0.95         # ML confidence threshold to block
 
 
 def process_packet(ip, timestamp):
