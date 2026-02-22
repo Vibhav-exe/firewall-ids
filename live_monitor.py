@@ -15,7 +15,7 @@ from core.inference import predict
 from monitor.alert_logger import log_alert
 
 
-INTERFACE = "eth0"       # Change to your interface name
+INTERFACE = "wlan0"       # Change to your interface name
 THRESHOLD = 0.75         # ML confidence threshold to block
 
 
