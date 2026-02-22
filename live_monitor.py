@@ -3,6 +3,12 @@ import pcap
 import dpkt
 import numpy as np
 from datetime import datetime
+from collections import defaultdict
+import time
+
+syn_tracker = defaultdict(list)
+SYN_THRESHOLD = 100       # packets
+SYN_WINDOW = 5
 
 
 WHITELIST = {
