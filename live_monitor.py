@@ -24,7 +24,7 @@ from monitor.alert_logger import log_alert
 
 
 INTERFACE = "wlan0"
-THRESHOLD = 0.95
+THRESHOLD = 0.30
 
 
 def process_packet(ip, timestamp):
