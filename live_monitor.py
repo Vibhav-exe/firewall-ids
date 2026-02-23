@@ -12,7 +12,7 @@ SYN_THRESHOLD = 100
 SYN_WINDOW = 5
 
 WHITELIST = {
-    "192.168.29.54",  # Your Windows machine
+    #"192.168.29.54",  # Your Windows machine
     "192.168.29.1",  # Router
 }
 
