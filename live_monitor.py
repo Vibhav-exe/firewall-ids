@@ -12,7 +12,7 @@ SYN_THRESHOLD = 50
 SYN_WINDOW = 3
 
 WHITELIST = {
-    "192.168.29.171",  # Your Raspberry Pi4
+    "192.168.29.171",  # Your Raspberry Pi
     "192.168.29.1",  # Router
 }
 
