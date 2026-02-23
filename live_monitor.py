@@ -8,8 +8,8 @@ import time
 from socket import inet_ntoa
 
 syn_tracker = defaultdict(list)
-SYN_THRESHOLD = 100
-SYN_WINDOW = 5
+SYN_THRESHOLD = 50
+SYN_WINDOW = 3
 
 WHITELIST = {
     #"192.168.29.54",  # Your Windows machine
@@ -27,7 +27,7 @@ from core.inference import predict
 from monitor.alert_logger import log_alert
 
 INTERFACE = "wlan0"
-THRESHOLD = 0.30
+THRESHOLD = 0.40
 
 
 def process_packet(ip, timestamp):
