@@ -8,6 +8,7 @@ import time
 from socket import inet_ntoa
 
 syn_tracker = defaultdict(list)
+blocked_ips_cache = set()
 SYN_THRESHOLD = 50
 SYN_WINDOW = 3
 
@@ -41,6 +42,10 @@ def process_packet(ip, timestamp):
         if src_ip in WHITELIST or dst_ip in WHITELIST:
             return
 
+        # ✅ Skip already blocked IPs (check early)
+        if src_ip in blocked_ips_cache:
+            return
+
         proto = {6: "TCP", 17: "UDP", 1: "ICMP"}.get(ip.p, str(ip.p))
 
         # SYN flood detection
@@ -62,6 +67,7 @@ def process_packet(ip, timestamp):
                           f"[ALERT] SYN FLOOD from {src_ip} → {dst_ip} | "
                           f"Count: {len(syn_tracker[src_ip])}")
                     block_ip(src_ip)
+                    blocked_ips_cache.add(src_ip)  # ✅ Add to cache
                     log_alert(src_ip, dst_ip, proto, 1.0)
                     del syn_tracker[src_ip]  # Remove from tracker after blocking
                     return
@@ -74,6 +80,7 @@ def process_packet(ip, timestamp):
             print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                   f"[ALERT] {src_ip} → {dst_ip} | {proto} | Score: {score:.2f}")
             block_ip(src_ip)
+            blocked_ips_cache.add(src_ip)  # ✅ Add to cache
             log_alert(src_ip, dst_ip, proto, score)
         else:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] "
