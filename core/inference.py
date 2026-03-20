@@ -66,10 +66,28 @@ def predict(features: np.ndarray) -> float:
 
     try:
         outputs = session.run(None, {input_name: features})
-        probabilities = outputs[0][0]
+        result = outputs[0]
 
-        # Return attack probability (1 = attack, 0 = normal)
-        return float(probabilities[1])
+        # ✅ Handle different model output formats
+        if isinstance(result, np.ndarray):
+            # If array, flatten and get first element
+            result = result.flatten()
+
+            if len(result) == 1:
+                # Single output (binary classification score)
+                score = float(result[0])
+            elif len(result) == 2:
+                # Two outputs [normal_prob, attack_prob]
+                score = float(result[1])  # Return attack probability
+            else:
+                # Multiple outputs - use first one
+                score = float(result[0])
+        else:
+            # If scalar, use directly
+            score = float(result)
+
+        # Ensure score is between 0 and 1
+        return max(0.0, min(1.0, score))
 
     except Exception as e:
         print(f"[ERROR] Inference failed: {e}")
