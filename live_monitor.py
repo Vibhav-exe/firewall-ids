@@ -61,7 +61,7 @@ from core.feature_extractor import extract_features
 from core.inference import predict
 from monitor.alert_logger import log_alert
 
-INTERFACE = "eth0"
+INTERFACE = "wlan0"
 THRESHOLD = 0.40
 
 
