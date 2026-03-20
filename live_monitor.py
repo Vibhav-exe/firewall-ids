@@ -164,6 +164,14 @@ def start_capture():
         print(f"[*] ML Sampling rate: 1 in {ML_SAMPLE_RATE} packets")
         print(f"[*] Whitelisted IPs: {WHITELIST}")
         print(f"[*] SYN flood threshold: {SYN_THRESHOLD} packets in {SYN_WINDOW}s")
+
+        # ✅ Dynamic mode description based on interface
+        if INTERFACE == "eth0":
+            print(f"[*] Mode: Gateway (monitoring LAN traffic)")
+        elif INTERFACE == "wlan0":
+            print(f"[*] Mode: WiFi monitoring (interface: {INTERFACE})")
+        else:
+            print(f"[*] Mode: Monitoring {INTERFACE}")
         print(f"[*] Mode: Gateway (monitoring LAN traffic)")
         print("-" * 50)
 
