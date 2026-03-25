@@ -8,6 +8,14 @@ import time
 from socket import inet_ntoa
 import platform
 
+
+led = None
+try:
+    from hardware.led_controller import LEDController
+    LED_AVAILABLE = True
+except ImportError:
+    LED_AVAILABLE = False
+    print("[INFO] LED module not found - Running without LED indicators")
 # ✅ Auto-detect hardware and optimize
 # platform.machine() returns:
 #   - 'armv7l' for Raspberry Pi 3B (32-bit ARM)
@@ -38,12 +46,20 @@ WHITELIST = {
     "192.168.29.1",
 }
 
+
 if sys.platform == "linux":
     from core.rule_engine import block_ip, initialize_nftables
 else:
     from mock.mock_nft import block_ip
     def initialize_nftables():
         pass
+try:
+    from hardware.led_controller import LEDController
+    USE_LEDS = True
+except ImportError:
+    print("[WARN] LED controller not available (not on Pi or GPIO not installed)")
+    USE_LEDS = False
+
 
 from core.feature_extractor import extract_features
 from core.inference import predict
@@ -113,6 +129,8 @@ def process_packet(ip, timestamp):
                     t for t in syn_tracker[src_ip]
                     if now - t < SYN_WINDOW
                 ]
+                if led and led.enabled and len(syn_tracker[src_ip]) > SYN_THRESHOLD * 0.8:
+                    led.flash_yellow(times=1, duration=0.1)
 
                 # ✅ DEBUG: Show count after cleanup
                 print(f"[DEBUG] After cleanup, count: {len(syn_tracker[src_ip])} (threshold: {SYN_THRESHOLD})")
@@ -121,10 +139,16 @@ def process_packet(ip, timestamp):
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                           f"[ALERT] SYN FLOOD from {src_ip} → {dst_ip} | "
                           f"Count: {len(syn_tracker[src_ip])}")
+                    # ✅ Flash red LED for SYN flood alert
+                    if led and led.enabled:
+                        led.flash_red(times=5, duration=0.2)
                     block_ip(src_ip)
                     blocked_ips_cache.add(src_ip)
                     log_alert(src_ip, dst_ip, proto, 1.0)
                     del syn_tracker[src_ip]
+                    # ✅ Set LED to blocked state
+                    if led and led.enabled:
+                        led.set_blocked()
                     return
 
         # ML-based detection (sampled)
@@ -135,9 +159,15 @@ def process_packet(ip, timestamp):
             if score > THRESHOLD:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                       f"[ALERT] {src_ip} → {dst_ip} | {proto} | Score: {score:.2f}")
+                # ✅ Flash red LED for ML detection alert
+                if led and led.enabled:
+                    led.flash_red(times=3, duration=0.3)
                 block_ip(src_ip)
                 blocked_ips_cache.add(src_ip)
                 log_alert(src_ip, dst_ip, proto, score)
+                # ✅ Set LED to blocked state
+                if led and led.enabled:
+                    led.set_blocked()
         
     except AttributeError as e:
         print(f"[DEBUG] AttributeError: {e}")
@@ -149,6 +179,21 @@ def process_packet(ip, timestamp):
 def start_capture():
     print("[*] Initializing nftables...")
     initialize_nftables()
+    if LED_AVAILABLE:
+        try:
+            led = LEDController()
+            if led.enabled:
+                led.startup_sequence()
+                print("[*] ✓ LED indicators active")
+            else:
+                print("[*] Running without LED indicators")
+                led = None
+        except Exception as e:
+            print(f"[WARN] LED controller error: {e}")
+            print("[*] Continuing without LED support")
+            led = None
+    else:
+        print("[*] LED controller not available - Running in standard mode")
     
     try:
         pc = pcap.pcap(
@@ -199,7 +244,10 @@ def start_capture():
     except Exception as e:
         print(f"[FATAL] Capture error: {e}")
     finally:
-        print("[*] Closing capture.")
+         if led and led.enabled:
+            led.cleanup()
+            print("[*] Closing capture.")
+            print("[*] Closing capture.")
 
 
 if __name__ == "__main__":
