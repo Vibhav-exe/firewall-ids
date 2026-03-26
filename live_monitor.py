@@ -8,7 +8,7 @@ import time
 from socket import inet_ntoa
 import platform
 
-
+# ✅ Try to import LED Controller (only once)
 led = None
 try:
     from hardware.led_controller import LEDController
@@ -16,6 +16,7 @@ try:
 except ImportError:
     LED_AVAILABLE = False
     print("[INFO] LED module not found - Running without LED indicators")
+
 # ✅ Auto-detect hardware and optimize
 # platform.machine() returns:
 #   - 'armv7l' for Raspberry Pi 3B (32-bit ARM)
@@ -46,20 +47,12 @@ WHITELIST = {
     "192.168.29.1",
 }
 
-
 if sys.platform == "linux":
     from core.rule_engine import block_ip, initialize_nftables
 else:
     from mock.mock_nft import block_ip
     def initialize_nftables():
         pass
-try:
-    from hardware.led_controller import LEDController
-    USE_LEDS = True
-except ImportError:
-    print("[WARN] LED controller not available (not on Pi or GPIO not installed)")
-    USE_LEDS = False
-
 
 from core.feature_extractor import extract_features
 from core.inference import predict
@@ -87,7 +80,7 @@ def cleanup_trackers():
 
 
 def process_packet(ip, timestamp):
-    global packet_counter
+    global packet_counter, led  # ✅ Added led to global
     
     try:
         # Periodic cleanup
@@ -98,19 +91,11 @@ def process_packet(ip, timestamp):
         src_ip = inet_ntoa(ip.src)
         dst_ip = inet_ntoa(ip.dst)
 
-        # ✅ DEBUG: Print every 10th packet
-        if packet_counter % 10 == 0:
-            print(f"[DEBUG] Packet #{packet_counter}: {src_ip} → {dst_ip} | Proto: {ip.p}")
-
-        # Whitelist check
-        if src_ip in WHITELIST or dst_ip in WHITELIST:
-            if packet_counter % 10 == 0:
-                print(f"[DEBUG] Packet skipped (whitelist)")
+        # ✅ FIXED: Only check source IP in whitelist
+        if src_ip in WHITELIST:
             return
 
         if src_ip in blocked_ips_cache:
-            if packet_counter % 10 == 0:
-                print(f"[DEBUG] Packet skipped (already blocked)")
             return
 
         proto = {6: "TCP", 17: "UDP", 1: "ICMP"}.get(ip.p, str(ip.p))
@@ -120,35 +105,34 @@ def process_packet(ip, timestamp):
             tcp = ip.data
             if isinstance(tcp, dpkt.tcp.TCP) and (tcp.flags & dpkt.tcp.TH_SYN):
                 now = time.time()
-                
-                # ✅ DEBUG: Show SYN packet count
-                print(f"[DEBUG] SYN from {src_ip}, current count: {len(syn_tracker[src_ip])}")
-                
                 syn_tracker[src_ip].append(now)
                 syn_tracker[src_ip] = [
                     t for t in syn_tracker[src_ip]
                     if now - t < SYN_WINDOW
                 ]
+                
+                # ✅ Flash yellow when approaching threshold
                 if led and led.enabled and len(syn_tracker[src_ip]) > SYN_THRESHOLD * 0.8:
                     led.flash_yellow(times=1, duration=0.1)
-
-                # ✅ DEBUG: Show count after cleanup
-                print(f"[DEBUG] After cleanup, count: {len(syn_tracker[src_ip])} (threshold: {SYN_THRESHOLD})")
 
                 if len(syn_tracker[src_ip]) > SYN_THRESHOLD:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                           f"[ALERT] SYN FLOOD from {src_ip} → {dst_ip} | "
                           f"Count: {len(syn_tracker[src_ip])}")
+                    
                     # ✅ Flash red LED for SYN flood alert
                     if led and led.enabled:
                         led.flash_red(times=5, duration=0.2)
+                    
                     block_ip(src_ip)
                     blocked_ips_cache.add(src_ip)
                     log_alert(src_ip, dst_ip, proto, 1.0)
                     del syn_tracker[src_ip]
+                    
                     # ✅ Set LED to blocked state
                     if led and led.enabled:
                         led.set_blocked()
+                    
                     return
 
         # ML-based detection (sampled)
@@ -159,26 +143,32 @@ def process_packet(ip, timestamp):
             if score > THRESHOLD:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                       f"[ALERT] {src_ip} → {dst_ip} | {proto} | Score: {score:.2f}")
+                
                 # ✅ Flash red LED for ML detection alert
                 if led and led.enabled:
                     led.flash_red(times=3, duration=0.3)
+                
                 block_ip(src_ip)
                 blocked_ips_cache.add(src_ip)
                 log_alert(src_ip, dst_ip, proto, score)
+                
                 # ✅ Set LED to blocked state
                 if led and led.enabled:
                     led.set_blocked()
         
-    except AttributeError as e:
-        print(f"[DEBUG] AttributeError: {e}")
+    except AttributeError:
         pass
     except Exception as e:
         print(f"[ERROR] process_packet: {e}")
 
 
 def start_capture():
+    global led  # ✅ Declare led as global
+    
     print("[*] Initializing nftables...")
     initialize_nftables()
+    
+    # ✅ Initialize LED controller
     if LED_AVAILABLE:
         try:
             led = LEDController()
@@ -218,9 +208,11 @@ def start_capture():
             print(f"[*] Mode: WiFi monitoring (interface: {INTERFACE})")
         else:
             print(f"[*] Mode: Monitoring {INTERFACE}")
+        
+        # ✅ Set LED to normal state if available
+        if led and led.enabled:
+            led.set_normal()
             
-        print("-" * 50)
-        print("[*] DEBUG MODE ENABLED - Showing packet details")
         print("-" * 50)
 
         for timestamp, raw in pc:
@@ -233,8 +225,7 @@ def start_capture():
                 continue
             except dpkt.dpkt.UnpackError:
                 continue
-            except Exception as e:
-                print(f"[DEBUG] Capture exception: {e}")
+            except Exception:
                 pass
 
     except KeyboardInterrupt:
@@ -244,10 +235,10 @@ def start_capture():
     except Exception as e:
         print(f"[FATAL] Capture error: {e}")
     finally:
-         if led and led.enabled:
+        # ✅ Cleanup LEDs if initialized
+        if led and led.enabled:
             led.cleanup()
-            print("[*] Closing capture.")
-            print("[*] Closing capture.")
+        print("[*] Closing capture.")  # ✅ Fixed duplicate
 
 
 if __name__ == "__main__":
