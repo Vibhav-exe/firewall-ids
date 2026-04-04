@@ -18,25 +18,39 @@ except ImportError:
     print("[INFO] LED module not found - Running without LED indicators")
 
 # ✅ Auto-detect hardware and optimize
-# platform.machine() returns:
-#   - 'armv7l' for Raspberry Pi 3B (32-bit ARM)
-#   - 'aarch64' for Raspberry Pi 4 (64-bit ARM)
 PI_MODEL = platform.machine()
 
 if 'armv7' in PI_MODEL:  # Raspberry Pi 3B detected
-    ML_SAMPLE_RATE = 20      # Check ML every 20th packet (reduced CPU load)
-    MAX_TRACKED_IPS = 300    # Track fewer IPs (limited to 1GB RAM)
-    CLEANUP_INTERVAL = 50    # Clean memory more frequently
+    ML_SAMPLE_RATE = 20
+    MAX_TRACKED_IPS = 300
+    CLEANUP_INTERVAL = 50
     print("[*] Detected: Raspberry Pi 3B - Using optimized settings")
 else:  # Raspberry Pi 4 or better detected
-    ML_SAMPLE_RATE = 10      # Check ML every 10th packet (more frequent detection)
-    MAX_TRACKED_IPS = 500    # Track more IPs (4GB RAM available)
-    CLEANUP_INTERVAL = 100   # Clean memory less frequently
+    ML_SAMPLE_RATE = 10
+    MAX_TRACKED_IPS = 500
+    CLEANUP_INTERVAL = 100
     print("[*] Detected: Raspberry Pi 4+ - Using standard settings")
 
+# ✅ All trackers
 syn_tracker = defaultdict(list)
 blocked_ips_cache = set()
 packet_counter = 0
+
+port_scan_tracker = defaultdict(set)
+PORT_SCAN_THRESHOLD = 15
+PORT_SCAN_WINDOW = 10
+
+icmp_tracker = defaultdict(list)
+ICMP_THRESHOLD = 100
+ICMP_WINDOW = 5
+
+udp_tracker = defaultdict(list)
+UDP_THRESHOLD = 200
+UDP_WINDOW = 5
+
+connection_tracker = defaultdict(list)
+CONN_THRESHOLD = 10
+CONN_WINDOW = 60
 
 SYN_THRESHOLD = 50
 SYN_WINDOW = 3
@@ -64,14 +78,44 @@ THRESHOLD = 0.40
 
 def cleanup_trackers():
     """Clean up old tracking data to prevent memory growth."""
-    global syn_tracker
+    global syn_tracker, port_scan_tracker, icmp_tracker, udp_tracker, connection_tracker
     
     now = time.time()
+    
+    # ✅ Clean SYN tracker
     for ip in list(syn_tracker.keys()):
         syn_tracker[ip] = [t for t in syn_tracker[ip] if now - t < SYN_WINDOW]
         if not syn_tracker[ip]:
             del syn_tracker[ip]
     
+    # ✅ Clean port scan tracker
+    for ip in list(port_scan_tracker.keys()):
+        port_scan_tracker[ip] = {
+            (port, ts) for port, ts in port_scan_tracker[ip]
+            if now - ts < PORT_SCAN_WINDOW
+        }
+        if not port_scan_tracker[ip]:
+            del port_scan_tracker[ip]
+    
+    # ✅ Clean ICMP tracker
+    for ip in list(icmp_tracker.keys()):
+        icmp_tracker[ip] = [t for t in icmp_tracker[ip] if now - t < ICMP_WINDOW]
+        if not icmp_tracker[ip]:
+            del icmp_tracker[ip]
+    
+    # ✅ Clean UDP tracker
+    for ip in list(udp_tracker.keys()):
+        udp_tracker[ip] = [t for t in udp_tracker[ip] if now - t < UDP_WINDOW]
+        if not udp_tracker[ip]:
+            del udp_tracker[ip]
+    
+    # ✅ Clean connection tracker
+    for ip in list(connection_tracker.keys()):
+        connection_tracker[ip] = [t for t in connection_tracker[ip] if now - t < CONN_WINDOW]
+        if not connection_tracker[ip]:
+            del connection_tracker[ip]
+    
+    # ✅ Limit total tracked IPs
     if len(syn_tracker) > MAX_TRACKED_IPS:
         oldest_ips = sorted(syn_tracker.items(), 
                            key=lambda x: max(x[1]) if x[1] else 0)[:50]
@@ -80,7 +124,7 @@ def cleanup_trackers():
 
 
 def process_packet(ip, timestamp):
-    global packet_counter, led  # ✅ Added led to global
+    global packet_counter, led
     
     try:
         # Periodic cleanup
@@ -91,7 +135,7 @@ def process_packet(ip, timestamp):
         src_ip = inet_ntoa(ip.src)
         dst_ip = inet_ntoa(ip.dst)
 
-        # ✅ FIXED: Only check source IP in whitelist
+        # ✅ Only check source IP in whitelist
         if src_ip in WHITELIST:
             return
 
@@ -100,61 +144,159 @@ def process_packet(ip, timestamp):
 
         proto = {6: "TCP", 17: "UDP", 1: "ICMP"}.get(ip.p, str(ip.p))
 
-        # Rule-based SYN flood detection (always run)
-        if ip.p == 6:
+        # ======================================================================
+        # TCP-based detections (SYN flood, Port scan, Brute force)
+        # ======================================================================
+        if ip.p == 6:  # TCP
             tcp = ip.data
             if isinstance(tcp, dpkt.tcp.TCP) and (tcp.flags & dpkt.tcp.TH_SYN):
                 now = time.time()
+                dst_port = tcp.dport
+                
+                # ✅ 1. Brute Force Detection (SSH, FTP, Telnet, RDP)
+                if dst_port in [21, 22, 23, 3389]:
+                    connection_tracker[src_ip].append(now)
+                    connection_tracker[src_ip] = [
+                        t for t in connection_tracker[src_ip]
+                        if now - t < CONN_WINDOW
+                    ]
+                    
+                    if len(connection_tracker[src_ip]) > CONN_THRESHOLD:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] "
+                              f"[ALERT] BRUTE FORCE from {src_ip} | Port: {dst_port} | "
+                              f"Attempts: {len(connection_tracker[src_ip])}")
+                        
+                        if led and led.enabled:
+                            led.flash_yellow(times=3, duration=0.2)
+                            led.flash_red(times=3, duration=0.3)
+                            led.set_blocked()  # ✅ FIXED: Set LED state
+                        
+                        block_ip(src_ip)
+                        blocked_ips_cache.add(src_ip)
+                        log_alert(src_ip, dst_ip, proto, 1.0)
+                        del connection_tracker[src_ip]
+                        return  # ✅ FIXED: Return after blocking
+                
+                # ✅ 2. Port Scan Detection
+                port_scan_tracker[src_ip].add((dst_port, now))
+                port_scan_tracker[src_ip] = {
+                    (port, ts) for port, ts in port_scan_tracker[src_ip]
+                    if now - ts < PORT_SCAN_WINDOW
+                }
+                
+                unique_ports = len(set(port for port, _ in port_scan_tracker[src_ip]))
+                
+                if unique_ports > PORT_SCAN_THRESHOLD:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] "
+                          f"[ALERT] PORT SCAN from {src_ip} → {dst_ip} | "
+                          f"Scanned {unique_ports} ports")
+                    
+                    if led and led.enabled:
+                        led.flash_red(times=4, duration=0.25)
+                        led.set_blocked()  # ✅ FIXED: Set LED state
+                    
+                    block_ip(src_ip)
+                    blocked_ips_cache.add(src_ip)
+                    log_alert(src_ip, dst_ip, proto, 1.0)
+                    del port_scan_tracker[src_ip]
+                    return  # ✅ FIXED: Return after blocking
+                
+                # ✅ 3. SYN Flood Detection
                 syn_tracker[src_ip].append(now)
                 syn_tracker[src_ip] = [
                     t for t in syn_tracker[src_ip]
                     if now - t < SYN_WINDOW
                 ]
                 
-                # ✅ Flash yellow when approaching threshold
+                # Flash yellow when approaching threshold
                 if led and led.enabled and len(syn_tracker[src_ip]) > SYN_THRESHOLD * 0.8:
                     led.flash_yellow(times=1, duration=0.1)
-
+                
                 if len(syn_tracker[src_ip]) > SYN_THRESHOLD:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                           f"[ALERT] SYN FLOOD from {src_ip} → {dst_ip} | "
                           f"Count: {len(syn_tracker[src_ip])}")
                     
-                    # ✅ Flash red LED for SYN flood alert
                     if led and led.enabled:
                         led.flash_red(times=5, duration=0.2)
+                        led.set_blocked()
                     
                     block_ip(src_ip)
                     blocked_ips_cache.add(src_ip)
                     log_alert(src_ip, dst_ip, proto, 1.0)
                     del syn_tracker[src_ip]
-                    
-                    # ✅ Set LED to blocked state
-                    if led and led.enabled:
-                        led.set_blocked()
-                    
-                    return
-
+                    return  # ✅ Return after blocking
+        
+        # ======================================================================
+        # ICMP Flood Detection
+        # ======================================================================
+        if ip.p == 1:  # ICMP
+            now = time.time()
+            icmp_tracker[src_ip].append(now)
+            icmp_tracker[src_ip] = [
+                t for t in icmp_tracker[src_ip]
+                if now - t < ICMP_WINDOW
+            ]
+            
+            if len(icmp_tracker[src_ip]) > ICMP_THRESHOLD:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] "
+                      f"[ALERT] ICMP FLOOD from {src_ip} → {dst_ip} | "
+                      f"Count: {len(icmp_tracker[src_ip])}")
+                
+                if led and led.enabled:
+                    led.flash_red(times=3, duration=0.2)
+                    led.set_blocked()  # ✅ FIXED: Set LED state
+                
+                block_ip(src_ip)
+                blocked_ips_cache.add(src_ip)
+                log_alert(src_ip, dst_ip, proto, 1.0)
+                del icmp_tracker[src_ip]
+                return  # ✅ FIXED: Return after blocking
+        
+        # ======================================================================
+        # UDP Flood Detection
+        # ======================================================================
+        if ip.p == 17:  # UDP
+            now = time.time()
+            udp_tracker[src_ip].append(now)
+            udp_tracker[src_ip] = [
+                t for t in udp_tracker[src_ip]
+                if now - t < UDP_WINDOW
+            ]
+            
+            if len(udp_tracker[src_ip]) > UDP_THRESHOLD:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] "
+                      f"[ALERT] UDP FLOOD from {src_ip} → {dst_ip} | "
+                      f"Count: {len(udp_tracker[src_ip])}")
+                
+                if led and led.enabled:
+                    led.flash_red(times=3, duration=0.2)
+                    led.set_blocked()  # ✅ FIXED: Set LED state
+                
+                block_ip(src_ip)
+                blocked_ips_cache.add(src_ip)
+                log_alert(src_ip, dst_ip, proto, 1.0)
+                del udp_tracker[src_ip]
+                return  # ✅ FIXED: Return after blocking
+        
+        # ======================================================================
         # ML-based detection (sampled)
+        # ======================================================================
         if packet_counter % ML_SAMPLE_RATE == 0:
             features = extract_features(ip)
             score = predict(features)
 
             if score > THRESHOLD:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] "
-                      f"[ALERT] {src_ip} → {dst_ip} | {proto} | Score: {score:.2f}")
+                      f"[ALERT-ML] {src_ip} → {dst_ip} | {proto} | Score: {score:.2f}")
                 
-                # ✅ Flash red LED for ML detection alert
                 if led and led.enabled:
                     led.flash_red(times=3, duration=0.3)
+                    led.set_blocked()
                 
                 block_ip(src_ip)
                 blocked_ips_cache.add(src_ip)
                 log_alert(src_ip, dst_ip, proto, score)
-                
-                # ✅ Set LED to blocked state
-                if led and led.enabled:
-                    led.set_blocked()
         
     except AttributeError:
         pass
@@ -163,7 +305,7 @@ def process_packet(ip, timestamp):
 
 
 def start_capture():
-    global led  # ✅ Declare led as global
+    global led
     
     print("[*] Initializing nftables...")
     initialize_nftables()
@@ -199,9 +341,13 @@ def start_capture():
         print(f"[*] ML Detection threshold: {THRESHOLD}")
         print(f"[*] ML Sampling rate: 1 in {ML_SAMPLE_RATE} packets")
         print(f"[*] Whitelisted IPs: {WHITELIST}")
-        print(f"[*] SYN flood threshold: {SYN_THRESHOLD} packets in {SYN_WINDOW}s")
+        print(f"[*] Detection thresholds:")
+        print(f"    - SYN flood: {SYN_THRESHOLD} packets in {SYN_WINDOW}s")
+        print(f"    - Port scan: {PORT_SCAN_THRESHOLD} ports in {PORT_SCAN_WINDOW}s")
+        print(f"    - Brute force: {CONN_THRESHOLD} attempts in {CONN_WINDOW}s")
+        print(f"    - ICMP flood: {ICMP_THRESHOLD} packets in {ICMP_WINDOW}s")
+        print(f"    - UDP flood: {UDP_THRESHOLD} packets in {UDP_WINDOW}s")
         
-        # ✅ Dynamic mode description based on interface
         if INTERFACE == "eth0":
             print(f"[*] Mode: Gateway (monitoring LAN traffic)")
         elif INTERFACE == "wlan0":
@@ -209,7 +355,6 @@ def start_capture():
         else:
             print(f"[*] Mode: Monitoring {INTERFACE}")
         
-        # ✅ Set LED to normal state if available
         if led and led.enabled:
             led.set_normal()
             
@@ -235,10 +380,9 @@ def start_capture():
     except Exception as e:
         print(f"[FATAL] Capture error: {e}")
     finally:
-        # ✅ Cleanup LEDs if initialized
         if led and led.enabled:
             led.cleanup()
-        print("[*] Closing capture.")  # ✅ Fixed duplicate
+        print("[*] Closing capture.")
 
 
 if __name__ == "__main__":
