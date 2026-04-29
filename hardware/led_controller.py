@@ -15,8 +15,8 @@ except (ImportError, RuntimeError):
     GPIO_AVAILABLE = False
 
 # GPIO Pin Configuration (BCM numbering)
-GREEN_LED = 18   # Normal operation
-YELLOW_LED = 23  # Detection/Warning  
+GREEN_LED = 17   # Normal operation
+YELLOW_LED = 27  # Detection/Warning  
 RED_LED = 22     # Attack blocked
 
 
