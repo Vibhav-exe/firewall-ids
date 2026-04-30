@@ -147,8 +147,12 @@ local_ip = get_local_ip()
 
 # Build whitelist with auto-detected local IP
 WHITELIST = {
-    "192.168.30.1",   # Gateway LAN
-    "192.168.29.1",   # Router
+    "192.168.8.235",   # Gateway LAN
+    "192.168.8.1",   # Router
+    "192.168.8.89",
+    "192.168.8.51",
+    "192.168.8.255",
+    "239.255.255.250",
 }
 
 if local_ip:
